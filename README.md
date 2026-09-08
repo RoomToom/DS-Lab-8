@@ -1,3 +1,4 @@
+# Practical Labs 8
 # Implement CNN Model for Pet Image Classification
 
 In this task, you will implement a Convolutional Neural Network (CNN) to classify images of cats and dogs. The dataset is a reduced version of the [PetsImages dataset](https://www.kaggle.com/c/dogs-vs-cats), containing 700 images for each class.
