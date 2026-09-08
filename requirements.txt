@@ -1,0 +1,7 @@
+pandas
+seaborn
+scikit-learn
+tensorflow
+yapf
+requests
+tqdm
