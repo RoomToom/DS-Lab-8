@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+import pandas as pd
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
@@ -44,8 +47,9 @@ def train_dataset(batch_size: int = 64) -> Tuple[DirectoryIterator, DirectoryIte
     Returns:
         tuple: (train_generator, validation_generator, test_generator)
     """
-    dir_train = './PetImages/train'
-    dir_test = './PetImages/val'
+    root = Path(__file__).resolve().parents[1]
+    dir_train = root / 'PetImages/train'
+    dir_test = root / 'PetImages/val'
 
     # Data augmentation configuration for training data
     train_datagen = ImageDataGenerator(
@@ -59,6 +63,7 @@ def train_dataset(batch_size: int = 64) -> Tuple[DirectoryIterator, DirectoryIte
         validation_split=0.1,
     )
     # Only rescale test data, no augmentation
+    val_datagen = ImageDataGenerator(rescale=1./255, validation_split=0.1)
     test_datagen = ImageDataGenerator(rescale=1./255)
 
     # Load training data with augmentation
@@ -67,22 +72,30 @@ def train_dataset(batch_size: int = 64) -> Tuple[DirectoryIterator, DirectoryIte
         target_size=(180, 180),
         batch_size=batch_size,
         subset="training",
-        class_mode='categorical'
+        class_mode='categorical',
+        classes=['Cat', 'Dog'],
+        seed=42
     )
     # Load validation data
-    val = train_datagen.flow_from_directory(
+    val = val_datagen.flow_from_directory(
         dir_train,
         target_size=(180, 180),
         batch_size=batch_size,
         subset="validation",
-        class_mode='categorical'
+        shuffle=False,
+        class_mode='categorical',
+        classes=['Cat', 'Dog'],
+        seed=42
     )
     # Load test data
     test = test_datagen.flow_from_directory(
         dir_test,
+        shuffle=False,
         target_size=(180, 180),
         batch_size=batch_size,
-        class_mode='categorical'
+        class_mode='categorical',
+        classes=['Cat', 'Dog'],
+        seed=42
     )
 
     return train, val, test
@@ -93,44 +106,21 @@ def CNN() -> Sequential:
     Create and return a CNN model for pet image classification.
     
     Returns:
-        Sequential: A compiled CNN model with the following architecture:
+        Sequential: A CNN model with the following architecture:
         - Three convolutional blocks with increasing filters
         - Batch normalization and max pooling after each block
         - Dense layers with dropout for classification
     """
-    model = Sequential()
+    model = Sequential([Input(shape=(180, 180, 3))])
+    for filters in (128, 256, 512):
+        model.add(Conv2D(filters, (3, 3), strides=(2, 2), padding="same", activation="relu"))
+        model.add(BatchNormalization())
+        model.add(MaxPooling2D(pool_size=(3, 3), strides=(2, 2)))
+    model.add(Flatten())
+    model.add(Dense(1024, activation="relu"))
+    model.add(Dropout(0.3))
+    model.add(Dense(2, activation="softmax"))
 
-    # Input Layer
-    
-    # First Convolutional Block with 128 filters
-
-    # Batch normalization
-
-    # Max pooling
-
-    
-    # Second Convolutional Block with 256 filters
-
-    # Batch normalization
-
-    # Max pooling
-
-    
-    # Third Convolutional Block with 512 filters
-
-    # Batch normalization
-
-    # Max pooling
-
-    
-    # Flatten and Dense Layers
-
-    # Dense layer with 1024 units and ReLU activation
-
-    # Dropout layer with rate 0.3
-
-    # Output Dense layer with 2 units and softmax activation. 2 classes: Cat and Dog
-    
     return model
 
 
@@ -146,22 +136,53 @@ def train(batch_size: int = 32, epochs: int = 10) -> Tuple[Sequential, Directory
         tuple: (trained_model, test_data)
     """
     # Load the data
-    train_data, val_data, test_data = ...
+    keras.utils.set_random_seed(42)
+    train_data, val_data, test_data = train_dataset(batch_size)
     
     # Create and compile the model
-    model = ...
+    model = CNN()
+    model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
 
     # Print model summary
-    print(...)
+    model.summary()
     
-    # Train the model
-    history = model.fit(...)
+    output = Path(__file__).resolve().parents[1] / 'results'
+    output.mkdir(exist_ok=True)
+    checkpoint = output.parent / 'pets_model.keras'
+    # Select weights using validation data, leaving the test set for final evaluation.
+    history = model.fit(train_data, validation_data=val_data, epochs=epochs,
+                        callbacks=[IntervalLogger(), keras.callbacks.ModelCheckpoint(
+                            checkpoint, monitor='val_loss', save_best_only=True)], verbose=0)
+    model = keras.models.load_model(checkpoint)
     
     # Evaluate on test set
-    test_loss, test_acc = model.evaluate(...)
+    test_data.reset()
+    test_loss, test_acc = model.evaluate(test_data, verbose=0)
     print(f"Test accuracy: {test_acc:.4f}")
     
-    # Return the model and test data
+    pd.DataFrame(history.history, index=range(1, epochs + 1)).to_csv(
+        output / 'history.csv', index_label='epoch')
+    metrics = {'test_loss': float(test_loss), 'test_accuracy': float(test_acc),
+               'epochs': epochs, 'best_epoch': int(np.argmin(history.history['val_loss']) + 1),
+               'batch_size': batch_size,
+               'training_images': train_data.samples, 'validation_images': val_data.samples,
+               'test_images': test_data.samples, 'class_indices': test_data.class_indices}
+    (output / 'metrics.json').write_text(json.dumps(metrics, indent=2) + '\n', encoding='utf-8')
+    test_data.reset()
+    predictions = model.predict(test_data, verbose=0)
+    pd.DataFrame({'file': test_data.filenames, 'actual': test_data.classes,
+                  'predicted': predictions.argmax(axis=1),
+                  'probability_cat': predictions[:, 0], 'probability_dog': predictions[:, 1]}).to_csv(
+        output / 'predictions.csv', index=False)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    for ax, metric in zip(axes, ['loss', 'accuracy']):
+        ax.plot(range(1, epochs + 1), history.history[metric], label='Training')
+        ax.plot(range(1, epochs + 1), history.history['val_' + metric], label='Validation')
+        ax.set(xlabel='Epoch', ylabel=metric.capitalize())
+        ax.legend()
+    fig.tight_layout()
+    fig.savefig(output / 'training.png', dpi=150)
+
     return model, test_data
 
 
@@ -178,7 +199,7 @@ def visualize_augmented_images(train_data: DirectoryIterator) -> None:
     
     # Plot the images
     plt.figure(figsize=(10, 10))
-    for i in range(16):
+    for i in range(min(16, len(images))):
         plt.subplot(4, 4, i + 1)
         plt.xticks([])
         plt.yticks([])
@@ -196,14 +217,17 @@ def visualize_predictions(model: Sequential, test_data: DirectoryIterator) -> No
         model: Trained CNN model
         test_data: Test data generator
     """
-    # Get predictions for the test set
-    images, true_labels = next(test_data)
-    predictions = model.predict(images)
+    indices = np.concatenate([np.flatnonzero(test_data.classes == label)[:8]
+                              for label in (0, 1)])
+    images = np.stack([keras.utils.img_to_array(keras.utils.load_img(
+        test_data.filepaths[i], target_size=(180, 180))) / 255. for i in indices])
+    true_labels = keras.utils.to_categorical(test_data.classes[indices], num_classes=2)
+    predictions = model.predict(images, verbose=0)
     class_names = {0: 'Cat', 1: 'Dog'}
     
     # Plot the predictions
     plt.figure(figsize=(15, 15))
-    for i in range(16):
+    for i in range(min(16, len(images))):
         plt.subplot(4, 4, i + 1)
         plt.xticks([])
         plt.yticks([])
@@ -213,18 +237,22 @@ def visualize_predictions(model: Sequential, test_data: DirectoryIterator) -> No
         true_class = class_names[np.argmax(true_labels[i])]
         plt.xlabel(f"Pred: {predicted_class}\nTrue: {true_class}")
     plt.tight_layout()
+    plt.savefig(Path(__file__).resolve().parents[1] / "results/predictions.png", dpi=150)
     plt.show()
 
 
 if __name__ == '__main__':
-    # Load data with augmentation
+    output = Path(__file__).resolve().parents[1] / 'results'
+    output.mkdir(exist_ok=True)
+    keras.utils.set_random_seed(42)
     train_data, val_data, test_data = train_dataset()
     
     # Visualize augmented images
     visualize_augmented_images(train_data)
+    plt.savefig(output / "augmented_images.png", dpi=150)
     
     # Train the model
-    model, test_data = train()
+    model, test_data = train(epochs=30)
     
     # Visualize predictions
     visualize_predictions(model, test_data)

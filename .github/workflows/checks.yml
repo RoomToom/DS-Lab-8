@@ -1,0 +1,54 @@
+name: CNN checks
+on: [push, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg
+      TF_NUM_INTRAOP_THREADS: 2
+      TF_NUM_INTEROP_THREADS: 2
+      OMP_NUM_THREADS: 2
+      TF_CPP_MIN_LOG_LEVEL: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python download_dataset.py
+      - name: Check architecture and training
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from src.tasks import CNN, train, train_dataset
+          model = CNN()
+          assert model.input_shape == (None, 180, 180, 3)
+          assert model.output_shape == (None, 2)
+          assert [type(layer).__name__ for layer in model.layers] == [
+              'Conv2D', 'BatchNormalization', 'MaxPooling2D'] * 3 + [
+              'Flatten', 'Dense', 'Dropout', 'Dense']
+          for i, filters in enumerate((128, 256, 512)):
+              conv, norm, pool = model.layers[i * 3:i * 3 + 3]
+              assert conv.filters == filters and conv.kernel_size == (3, 3)
+              assert conv.strides == (2, 2) and conv.padding == 'same'
+              assert conv.activation.__name__ == 'relu'
+              assert pool.pool_size == (3, 3) and pool.strides == (2, 2)
+              assert pool.padding == 'valid'
+          assert model.layers[-3].units == 1024
+          assert model.layers[-3].activation.__name__ == 'relu'
+          assert model.layers[-2].rate == 0.3
+          assert model.layers[-1].activation.__name__ == 'softmax'
+          training, validation, test = train_dataset(32)
+          assert not set(training.filepaths) & set(validation.filepaths)
+          assert not set(training.filepaths) & set(test.filepaths)
+          assert not validation.shuffle and not test.shuffle
+          assert training.class_indices == {'Cat': 0, 'Dog': 1}
+          model, test = train(epochs=1)
+          probabilities = model.predict(test, verbose=0)
+          assert probabilities.shape == (test.samples, 2)
+          assert np.isfinite(probabilities).all()
+          assert np.allclose(probabilities.sum(axis=1), 1, atol=1e-5)
+          PY

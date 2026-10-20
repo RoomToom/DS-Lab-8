@@ -1,44 +1,38 @@
-"""
-Script to download and extract the PetImages dataset.
-This script handles downloading a zip file containing pet images and extracting them to the local filesystem.
-"""
-
+"""Download and extract the pet image dataset."""
 from io import BytesIO
+from pathlib import Path
 from zipfile import ZipFile
 import requests
-import os
 from tqdm import tqdm
 
-# Check if dataset already exists
-if not os.path.exists("PetImages"):
-    print("Downloading dataset...")
-    # Download the dataset from Google Cloud Storage
-    response = requests.get("https://storage.googleapis.com/ai-fundamentals/data/petsimages.zip", stream=True)
-    total_size = int(response.headers.get('content-length', 0))
-    
-    # Create a BytesIO buffer to store the downloaded data
-    buffer = BytesIO()
 
-    with tqdm(
-        desc="Downloading",
-        total=total_size,
-        unit='iB',
-        unit_scale=True,
-        unit_divisor=1024,
-    ) as bar:
-        for data in response.iter_content(chunk_size=1024):
-            buffer.write(data)
-            bar.update(len(data))
-    
-    print("Extracting dataset...")
-    buffer.seek(0)  # Reset buffer position to beginning for extraction
-    with ZipFile(buffer) as zip_file:
-        total_files = len(zip_file.namelist())
-        with tqdm(total=total_files, desc="Extracting") as pbar:
-            for file in zip_file.namelist():
-                zip_file.extract(file)
-                pbar.update(1)
-    
+def download_dataset() -> None:
+    root = Path(__file__).resolve().parent
+    folders = [root / "PetImages" / split / label
+               for split in ("train", "val") for label in ("Cat", "Dog")]
+    if all(folder.is_dir() and any(folder.glob("*.jpg")) for folder in folders):
+        print("Dataset already exists.")
+        return
+    url = "https://storage.googleapis.com/ai-fundamentals/data/petsimages.zip"
+    buffer = BytesIO()
+    with requests.get(url, stream=True, timeout=60) as response:
+        response.raise_for_status()
+        with tqdm(total=int(response.headers.get("content-length", 0)),
+                  desc="Downloading", unit="B", unit_scale=True) as bar:
+            for chunk in response.iter_content(chunk_size=65536):
+                buffer.write(chunk)
+                bar.update(len(chunk))
+    buffer.seek(0)
+    with ZipFile(buffer) as archive:
+        for name in archive.namelist():
+            target = (root / name).resolve()
+            if not target.is_relative_to(root / "PetImages"):
+                raise ValueError("Archive contains an unexpected path.")
+        archive.extractall(root)
+    if not all(folder.is_dir() and any(folder.glob("*.jpg")) for folder in folders):
+        raise ValueError("The dataset is missing image folders.")
     print("Dataset downloaded and extracted successfully.")
-else:
-    print("Dataset already exists.")
+
+
+if __name__ == "__main__":
+    download_dataset()
