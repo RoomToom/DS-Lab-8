@@ -1,8 +1,8 @@
 {
-  "test_loss": 0.6533534526824951,
-  "test_accuracy": 0.6526315808296204,
-  "epochs": 30,
-  "best_epoch": 23,
+  "test_loss": 0.5129669904708862,
+  "test_accuracy": 0.7684210538864136,
+  "epochs": 50,
+  "best_epoch": 41,
   "batch_size": 32,
   "training_images": 1014,
   "validation_images": 112,

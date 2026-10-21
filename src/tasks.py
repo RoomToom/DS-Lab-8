@@ -54,12 +54,11 @@ def train_dataset(batch_size: int = 64) -> Tuple[DirectoryIterator, DirectoryIte
     # Data augmentation configuration for training data
     train_datagen = ImageDataGenerator(
         rescale=1./255,
-        zoom_range=0.3,
-        rotation_range=50,
+        zoom_range=0.15,
+        rotation_range=15,
         width_shift_range=0.1,
-        height_shift_range=0.2,
+        height_shift_range=0.1,
         horizontal_flip=True,
-        vertical_flip=True,
         validation_split=0.1,
     )
     # Only rescale test data, no augmentation
@@ -114,7 +113,7 @@ def CNN() -> Sequential:
     model = Sequential([Input(shape=(180, 180, 3))])
     for filters in (128, 256, 512):
         model.add(Conv2D(filters, (3, 3), strides=(2, 2), padding="same", activation="relu"))
-        model.add(BatchNormalization())
+        model.add(BatchNormalization(momentum=0.9))
         model.add(MaxPooling2D(pool_size=(3, 3), strides=(2, 2)))
     model.add(Flatten())
     model.add(Dense(1024, activation="relu"))
@@ -141,7 +140,7 @@ def train(batch_size: int = 32, epochs: int = 10) -> Tuple[Sequential, Directory
     
     # Create and compile the model
     model = CNN()
-    model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
+    model.compile(optimizer=keras.optimizers.Adam(learning_rate=3e-4), loss="categorical_crossentropy", metrics=["accuracy"])
 
     # Print model summary
     model.summary()
@@ -152,7 +151,11 @@ def train(batch_size: int = 32, epochs: int = 10) -> Tuple[Sequential, Directory
     # Select weights using validation data, leaving the test set for final evaluation.
     history = model.fit(train_data, validation_data=val_data, epochs=epochs,
                         callbacks=[IntervalLogger(), keras.callbacks.ModelCheckpoint(
-                            checkpoint, monitor='val_loss', save_best_only=True)], verbose=0)
+                            checkpoint, monitor='val_loss', save_best_only=True),
+                            keras.callbacks.ReduceLROnPlateau(
+                                monitor='val_loss', factor=0.5, patience=4, min_lr=1e-6),
+                            keras.callbacks.EarlyStopping(monitor='val_loss', patience=12)], verbose=0)
+    epochs = len(history.history['loss'])
     model = keras.models.load_model(checkpoint)
     
     # Evaluate on test set
@@ -252,7 +255,7 @@ if __name__ == '__main__':
     plt.savefig(output / "augmented_images.png", dpi=150)
     
     # Train the model
-    model, test_data = train(epochs=30)
+    model, test_data = train(epochs=50)
     
     # Visualize predictions
     visualize_predictions(model, test_data)
