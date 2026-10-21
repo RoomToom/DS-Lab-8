@@ -1,0 +1,14 @@
+{
+  "test_loss": 0.6533534526824951,
+  "test_accuracy": 0.6526315808296204,
+  "epochs": 30,
+  "best_epoch": 23,
+  "batch_size": 32,
+  "training_images": 1014,
+  "validation_images": 112,
+  "test_images": 190,
+  "class_indices": {
+    "Cat": 0,
+    "Dog": 1
+  }
+}
